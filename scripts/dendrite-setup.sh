@@ -49,6 +49,11 @@ else # reset
     fi
 
     ansible-playbook -i inventory/hosts setup.yml --tags=setup-dendrite
+
+    if [ "$setup_type" = "reset-sqlite" ]; then
+        # Need Docker to mount directory for storing SQLite DB
+        yes | cp backup/matrix-dendrite.service /etc/systemd/system/matrix-dendrite.service
+    fi
 fi
 
 # Server specific config setup
