@@ -15,7 +15,7 @@ parser.add_argument("-o", "--output", type=str, default="users.csv", nargs="?",
 args = parser.parse_args()
 
 with open(args.output, "w", encoding="utf-8") as csvfile:
-    fieldnames = ["username", "password", "user_id", "access_token"]
+    fieldnames = ["username", "password"]
     writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
     writer.writeheader()
     for i in range(args.num_users):

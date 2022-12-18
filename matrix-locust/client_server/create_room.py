@@ -89,7 +89,9 @@ class MatrixRoomCreatorUser(MatrixUser):
             return
 
         # Log in as this current user if not already logged in
-        if len(self.user_id) < 1 or len(self.access_token) < 1:
+        if self.user_id is None or self.access_token is None or \
+            len(self.user_id) < 1 or len(self.access_token) < 1:
+            
             self.login(start_syncing = False, log_request=True)
 
         # The login() method sets user_id and access_token

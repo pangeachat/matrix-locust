@@ -57,7 +57,9 @@ class MatrixInviteAcceptorUser(MatrixUser):
             return
 
         # Log in as this current user if not already logged in
-        if len(self.user_id) < 1 or len(self.access_token) < 1:
+        if self.user_id is None or self.access_token is None or \
+            len(self.user_id) < 1 or len(self.access_token) < 1:
+            
             self.login(start_syncing = False, log_request=True)
 
         # Call /sync to get our list of invited rooms

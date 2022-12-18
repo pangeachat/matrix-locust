@@ -34,6 +34,7 @@ from locust import task, between, TaskSet
 from locust import events
 from locust.runners import MasterRunner, WorkerRunner
 from locust_plugins.users import RestUser
+from collections import namedtuple
 
 import gevent
 
@@ -256,19 +257,27 @@ class MatrixUser(RestUser):
 
     self.username = user_dict["username"]
     self.password = user_dict["password"]
-    self.user_id = tokens_dict[self.username]["user_id"]
-    self.access_token = tokens_dict[self.username]["access_token"]
-    self.sync_token = tokens_dict[self.username]["sync_token"]
 
-    if len(self.user_id) < 1 or len(self.access_token) < 1:
+    if tokens_dict.get(self.username) is None:
       self.user_id = None
       self.access_token = None
-      return
-
-    if len(self.sync_token) < 1:
       self.sync_token = None
+    else:
+      self.user_id = tokens_dict[self.username].get("user_id")
+      self.access_token = tokens_dict[self.username].get("access_token")
+      self.sync_token = tokens_dict[self.username].get("sync_token")
 
-    self.matrix_domain = self.user_id.split(":")[-1]
+      # Handle empty strings
+      if len(self.user_id) < 1 or len(self.access_token) < 1:
+        self.user_id = None
+        self.access_token = None
+        return
+
+      if len(self.sync_token) < 1:
+        self.sync_token = None
+
+      self.matrix_domain = self.user_id.split(":")[-1]
+    
     self._reset_user_state()
 
   def login(self, start_syncing=False, log_request=False):
@@ -308,6 +317,13 @@ class MatrixUser(RestUser):
         self.user_id = response_json["user_id"]
         self.device_id = response_json["device_id"]
         self.matrix_domain = self.user_id.split(":")[-1]
+
+        # Refresh tokens stored in the csv file (Have to emulate locust message
+        # object)
+        msg = namedtuple("msg", ["data"])
+        msg.data = { "username": self.username, "user_id": self.user_id,
+                     "access_token": self.access_token, "sync_token": "" }
+        update_tokens(None, msg)
 
         if start_syncing and self.access_token is not None:
           # Spawn a Greenlet to act as this user's client, constantly /sync'ing with the server

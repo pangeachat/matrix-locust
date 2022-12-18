@@ -113,7 +113,14 @@ class MatrixChatUser(MatrixUser):
       gevent.sleep(999999)
       return
 
+    # Change to force user login request and refresh tokens
+    invalidate_access_tokens = False
+
     self.login_from_csv(user_dict)
+
+    if invalidate_access_tokens:
+      self.user_id = None
+      self.access_token = None
 
     if not (self.user_id is None) and not (self.access_token is None):
       self.start_syncing()
