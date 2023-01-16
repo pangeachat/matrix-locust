@@ -30,10 +30,9 @@ import logging
 from http import HTTPStatus
 import mimetypes
 
-from locust import task, between, TaskSet
+from locust import task, between, TaskSet, FastHttpUser
 from locust import events
 from locust.runners import MasterRunner, WorkerRunner
-from locust_plugins.users import RestUser
 from collections import namedtuple
 
 import gevent
@@ -116,8 +115,7 @@ def update_tokens(environment, msg, **_kwargs):
 
   tokens_dict[username] = { "user_id": user_id, "access_token": access_token, "sync_token": sync_token }
 
-# MatrixUser extends https://github.com/SvenskaSpel/locust-plugins/blob/master/locust_plugins/users/rest.py
-class MatrixUser(RestUser):
+class MatrixUser(FastHttpUser):
 
   # Don't ever directly instantiate this class
   abstract = True

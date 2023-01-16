@@ -6,3 +6,9 @@ users.csv
 rooms.json
 tokens.csv
 images
+
+locust.csv_exceptions.csv
+locust.csv_failures.csv
+locust.csv_stats.csv
+locust.csv_stats_history.csv
+locust.html
