@@ -7,10 +7,11 @@ import resource
 
 from locust import task, constant
 from locust import events
-from locust.runners import MasterRunner
+from locust.runners import MasterRunner, WorkerRunner
 
 import gevent
-from matrixuser import MatrixUser
+from matrix_locust.users.matrixuser import MatrixUser
+from nio.responses import RoomCreateError, LoginError
 
 # Preflight ####################################################################
 
@@ -19,10 +20,14 @@ def on_locust_init(environment, **_kwargs):
     # Increase resource limits to prevent OS running out of descriptors
     resource.setrlimit(resource.RLIMIT_NOFILE, (999999, 999999))
 
-    # Register event hooks
-    if not isinstance(environment.runner, MasterRunner):
+    # Multi-worker
+    if isinstance(environment.runner, WorkerRunner):
         print(f"Registered 'load_users' handler on {environment.runner.client_id}")
         environment.runner.register_message("load_users", MatrixRoomCreatorUser.load_users)
+    # Single-worker
+    elif not isinstance(environment.runner, WorkerRunner) and not isinstance(environment.runner, MasterRunner):
+        # Open our list of users
+        MatrixRoomCreatorUser.worker_users = csv.DictReader(open("users.csv"))
 
 @events.test_start.add_listener
 def on_test_start(environment, **_kwargs):
@@ -60,9 +65,6 @@ class MatrixRoomCreatorUser(MatrixUser):
     worker_users = []
     worker_rooms_for_users = {}
 
-    # Indicates the number of users who have completed their room creation task
-    num_users_rooms_created = 0
-
     @staticmethod
     def load_users(environment, msg, **_kwargs):
         MatrixRoomCreatorUser.worker_users = iter(msg.data)
@@ -71,6 +73,9 @@ class MatrixRoomCreatorUser(MatrixUser):
 
     @task
     def create_rooms_for_user(self):
+        # Multiple locust users re-use the same class instance, so need to reset the state
+        self.reset_client()
+
         # Load the next user for room creation
         try:
             user = next(MatrixRoomCreatorUser.worker_users)
@@ -82,30 +87,28 @@ class MatrixRoomCreatorUser(MatrixUser):
 
         self.login_from_csv(user)
 
-        if self.username is None or self.password is None:
-            #print("Error: Couldn't get username/password")
+        if self.matrix_client.user is None or self.matrix_client.password is None:
             logging.error("[%s]: Couldn't get username/password. Skipping...",
                           MatrixRoomCreatorUser.worker_id)
             return
 
         # Log in as this current user if not already logged in
-        if self.user_id is None or self.access_token is None or \
-            len(self.user_id) < 1 or len(self.access_token) < 1:
-            
-            self.login(start_syncing = False, log_request=True)
+        if self.matrix_client.user_id is None or self.matrix_client.access_token is None or \
+            len(self.matrix_client.user_id) < 1 or len(self.matrix_client.access_token) < 1:
 
-        # The login() method sets user_id and access_token
-        if self.user_id is None or self.access_token is None:
-            logging.error("Login failed for User [%s]", self.username)
-            return
+            response = self.matrix_client.login(self.matrix_client.password)
+
+            if isinstance(response, LoginError):
+                logging.error("Login failed for User [%s]", self.matrix_client.user)
+                return
 
         def username_to_userid(uname):
-            uid = uname + ":" + self.matrix_domain
+            uid = uname + ":" + self.matrix_client.matrix_domain
             if not uid.startswith("@"):
                 uid = "@" + uid
             return uid
 
-        my_rooms_info = MatrixRoomCreatorUser.worker_rooms_for_users.get(self.username, [])
+        my_rooms_info = MatrixRoomCreatorUser.worker_rooms_for_users.get(self.matrix_client.user, [])
         #logging.info("User [%s] Found %d rooms to be created", self.username, len(my_rooms_info))
 
         for room_info in my_rooms_info:
@@ -114,20 +117,21 @@ class MatrixRoomCreatorUser(MatrixUser):
             usernames = room_info["users"]
             user_ids = list(map(username_to_userid, usernames))
             logging.info("User [%s] Creating room [%s] with %d users",
-                         self.username, room_name, len(user_ids))
+                         self.matrix_client.user, room_name, len(user_ids))
 
             # Actually create the room
             retries = 3
             while retries > 0:
-                room_id = self.create_room(alias=None, room_name=room_name, user_ids=user_ids)
+                response = self.matrix_client.room_create(alias=None, name=room_name, invite=user_ids)
 
-                if room_id is None:
+                if isinstance(response, RoomCreateError):
                     logging.info("[%s] Could not create room %s (attempt %d). Trying again...",
-                                 self.username, room_name, 4 - retries)
+                                 self.matrix_client.user, room_name, 4 - retries)
                     retries -= 1
                 else:
+                    logging.info("[%s] Created room [%s]", self.matrix_client.user, response.room_id)
                     break
 
             if retries == 0:
-                logging.error("[%s] Error creating room %s. Skipping...", self.username, room_name)
-
+                logging.error("[%s] Error creating room %s. Skipping...",
+                              self.matrix_client.user, room_name)

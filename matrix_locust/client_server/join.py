@@ -1,14 +1,16 @@
 #!/bin/env python3
 
+import csv
 import resource
 import logging
 
 from locust import task, constant
 from locust import events
-from locust.runners import MasterRunner
+from locust.runners import MasterRunner, WorkerRunner
 
 import gevent
-from matrixuser import MatrixUser
+from matrix_locust.users.matrixuser import MatrixUser
+from nio.responses import JoinError, LoginError
 
 # Preflight ###############################################
 
@@ -17,11 +19,14 @@ def on_locust_init(environment, **_kwargs):
     # Increase resource limits to prevent OS running out of descriptors
     resource.setrlimit(resource.RLIMIT_NOFILE, (999999, 999999))
 
-    # Register event hooks
-    if not isinstance(environment.runner, MasterRunner):
+    # Multi-worker
+    if isinstance(environment.runner, WorkerRunner):
         print(f"Registered 'load_users' handler on {environment.runner.client_id}")
         environment.runner.register_message("load_users", MatrixInviteAcceptorUser.load_users)
-
+    # Single-worker
+    elif not isinstance(environment.runner, WorkerRunner) and not isinstance(environment.runner, MasterRunner):
+        # Open our list of users
+        MatrixInviteAcceptorUser.worker_users = csv.DictReader(open("users.csv"))
 
 ###########################################################
 
@@ -40,6 +45,9 @@ class MatrixInviteAcceptorUser(MatrixUser):
 
     @task
     def accept_invites(self):
+        # Multiple locust users re-use the same class instance, so need to reset the state
+        self.reset_client()
+
         # Load the next user
         try:
             user = next(MatrixInviteAcceptorUser.worker_users)
@@ -51,42 +59,37 @@ class MatrixInviteAcceptorUser(MatrixUser):
 
         self.login_from_csv(user)
 
-        if self.username is None or self.password is None:
-            #print("Error: Couldn't get username/password")
+        if self.matrix_client.user is None or self.matrix_client.password is None:
             logging.error("Couldn't get username/password. Skipping...")
             return
 
         # Log in as this current user if not already logged in
-        if self.user_id is None or self.access_token is None or \
-            len(self.user_id) < 1 or len(self.access_token) < 1:
-            
-            self.login(start_syncing = False, log_request=True)
+        if self.matrix_client.user_id is None or self.matrix_client.access_token is None or \
+            len(self.matrix_client.user_id) < 1 or len(self.matrix_client.access_token) < 1:
+
+            response = self.matrix_client.login(self.matrix_client.password)
+
+            if isinstance(response, LoginError):
+                logging.error("Login failed for User [%s]", self.matrix_client.user)
+                return
 
         # Call /sync to get our list of invited rooms
-        self.sync()
+        self.matrix_client.sync()
+        invited_rooms = self.matrix_client.invited_rooms.keys()
 
-        # Persist initial sync token for chat simulation
-        token_update_request = { "username": self.username, "user_id": self.user_id,
-                                 "access_token": self.access_token, "sync_token": self.sync_token }
-        self.environment.runner.send_message("update_tokens", token_update_request)
-
-        # self.invited_room_ids set is modified by the MatrixUser class after joining a room
-        rooms_to_join = self.invited_room_ids.copy()
-
-        logging.info("User [%s] has %d pending invites",
-                     self.username, len(self.invited_room_ids))
-        for room_id in rooms_to_join:
+        logging.info("User [%s] has %d pending invites", self.matrix_client.user, len(invited_rooms))
+        for room_id in invited_rooms:
             retries = 3
             while retries > 0:
-                result = self.join_room(room_id)
+                response = self.matrix_client.join(room_id)
 
-                if result is None:
+                if isinstance(response, JoinError):
                     logging.info("[%s] Could not join room %s (attempt %d). Trying again...",
-                                 self.username, room_id, 4 - retries)
+                                 self.matrix_client.user, room_id, 4 - retries)
                     retries -= 1
                 else:
+                    logging.info("[%s] Joined room %s", self.matrix_client.user, room_id)
                     break
 
             if retries == 0:
-                logging.error("[%s] Error joining room %s. Skipping...", self.username, room_id)
-
+                logging.error("[%s] Error joining room %s. Skipping...", self.matrix_client.user, room_id)
