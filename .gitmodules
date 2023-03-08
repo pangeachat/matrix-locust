@@ -1,0 +1,4 @@
+[submodule "matrix_locust/bsspeke"]
+	path = matrix_locust/bsspeke
+	url = https://gitlab.futo.org/cvwright/bsspeke.git
+    ignore = dirty
