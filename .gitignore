@@ -8,6 +8,7 @@ tokens.csv
 images
 venv
 data
+matrix_locust/bsspeke
 
 locust.csv_exceptions.csv
 locust.csv_failures.csv
