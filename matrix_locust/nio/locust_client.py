@@ -84,12 +84,17 @@ from nio.responses import (
     RoomCreateError,
     RoomCreateResponse,
     RoomForgetResponse,
+    RoomGetStateEventError,
+    RoomGetStateEventResponse,
+    RoomGetStateError,
+    RoomGetStateResponse,
     RoomInviteResponse,
     RoomKeyRequestResponse,
     RoomKickResponse,
     RoomLeaveResponse,
     RoomMessagesError,
     RoomMessagesResponse,
+    RoomPutStateError,
     RoomPutStateResponse,
     RoomReadMarkersResponse,
     RoomRedactResponse,
@@ -111,6 +116,23 @@ import logging
 from locust import User
 from http import HTTPStatus
 from collections import namedtuple
+
+import binascii
+import base64
+import sys
+import os
+
+# have to update module path since bsspeke not in package (_bsspeke_cffi)
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", "bsspeke", "python"))
+from ..bsspeke.python import BSSpeke
+
+from matrix_locust.nio.contrib import (
+    ApiExt,
+    RoomGetTagsError,
+    RoomGetTagsResponse,
+    RoomSetTagsError,
+    RoomSetTagsResponse,
+)
 
 @dataclass
 class ResponseCb:
@@ -187,6 +209,8 @@ class LocustClient(Client):
               name: str = None,
               *response_data,
     ):
+        headers = { 'Content-Type': 'application/json', 'Accept': 'application/json' }
+
         if body is not None:
             body = json.loads(body)
 
@@ -196,7 +220,7 @@ class LocustClient(Client):
 
         # Send request and update internal state of the object with the response
         # logging.info("[%s] Making API call to %s" % (self.user, url))
-        with self.locust_user.rest(method, url, json=body, name=name) as resp:
+        with self.locust_user.rest(method, url, headers=headers, json=body, name=name) as resp:
             matrix_response = response.from_dict(resp.js, *response_data)
             self.receive_response(matrix_response)
             self.run_response_callbacks([matrix_response])
@@ -387,6 +411,233 @@ class LocustClient(Client):
 
         #return await self._send(RegisterResponse, method, path, data)
 
+    def register_uia(self) -> None:
+        """TODO: Update to make this a generic UIA handler that calls callbacks depending on stages
+        rather than being circles flow specific"""
+        headers = {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+        }
+        path = "/_matrix/client/v3/register"
+        url = self.locust_user.host + path
+        session_id = ""
+        initial_json = None
+
+        self.matrix_domain = self.locust_user.host.removeprefix("https://matrix.")
+        self.user_id = f"@{self.user}:{self.matrix_domain}"
+
+        client = BSSpeke.Client(self.user_id, self.matrix_domain, self.password)
+        client_id = client.get_client_id()
+        blind = client.generate_blind()
+
+
+        # Request 1: Empty #####################################################
+        with self.locust_user.rest("POST", url, headers=headers, json={}) as r1:
+            initial_json = r1.js
+            session_id = r1.js.get("session", None)
+            # print("Got response: ", json.dumps(r1.js, indent=4))
+
+        # Request 3: Terms of service ##########################################
+        body = {
+            "username": self.user,
+            "auth": {
+                "type": "m.login.terms",
+                "session": session_id
+            }
+        }
+        with self.locust_user.rest("POST", url, headers=headers, json=body) as r3:
+            completed = r3.js.get("completed", [])
+            # print("Got response: ", json.dumps(r3.js, indent=4))
+
+        # Request 4: Claiming Username ##########################################
+        body = {
+            "auth": {
+                "type": "m.enroll.username",
+                "session": session_id,
+                "username": self.user
+            }
+        }
+        with self.locust_user.rest("POST", url, headers=headers, json=body) as r4:
+            completed = r4.js.get("completed", [])
+            # print("Got response: ", json.dumps(r4.js, indent=4))
+
+        # Request 6: BS-SPEKE OPRF
+        oprf_params = initial_json["params"]["m.enroll.bsspeke-ecc.oprf"]
+        curve = oprf_params["curve"]
+        blind_base64 = binascii.b2a_base64(blind, newline=False).decode('utf-8')
+
+        body = {
+            "auth": {
+                "type": "m.enroll.bsspeke-ecc.oprf",
+                "curve": curve,
+                "blind": blind_base64,
+                "session": session_id
+            }
+        }
+        bs_speke_params = None
+        with self.locust_user.rest("POST", url, headers=headers, json=body) as r6:
+            bs_speke_params = r6.js
+            completed = r6.js.get("completed", [])
+            r6_params = r6.js.get("params", {})
+            if r6.status_code != 401:
+                error = r6.js.get("error", "???")
+                errcode = r6.js.get("errcode", "???")
+                print("Got error response: %s %s" % (errcode, error))
+            # print("OPRF success - Got response: ", json.dumps(r6.js, indent=4))
+
+        # Request 7: BS-SPEKE Save
+        save_params = bs_speke_params["params"]["m.enroll.bsspeke-ecc.save"]
+        blind_salt = save_params["blind_salt"]
+        phf_params = {
+            "name": "argon2i",
+            "iterations": 3,
+            "blocks": 100000
+        }
+        P,V = client.generate_P_and_V(base64.b64decode(blind_salt), phf_params)
+
+        body = {
+            "username": self.user,
+            "auth": {
+                "type": "m.enroll.bsspeke-ecc.save",
+                "P": binascii.b2a_base64(P, newline=False).decode('utf-8'),
+                "V": binascii.b2a_base64(V, newline=False).decode('utf-8'),
+                "phf_params": phf_params,
+                "session": session_id
+            }
+        }
+        with self.locust_user.rest("POST", url, headers=headers, json=body) as r7:
+            completed = r7.js.get("completed", [])
+            if r7.status_code != 200:
+                error = r7.js.get("error", "???")
+                errcode = r7.js.get("errcode", "???")
+                print("Got error response: %s %s" % (errcode, error))
+            print("Register success - Got response: ", json.dumps(r7.js, indent=4))
+
+            self.user_id = r7.js.get("user_id", None)
+            self.access_token = r7.js.get("access_token", None)
+            self.matrix_domain = self.user_id.split(":")[-1]
+            self.device_id = r7.js.get("device_id", None)
+
+
+
+    def login_uia(self) -> None:
+        """TODO: Update to make this a generic UIA handler that calls callbacks depending on stages
+        rather than being circles flow specific"""
+        headers = {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+        }
+        path = "/_matrix/client/v3/login"
+        url = self.locust_user.host + path
+        session_id = ""
+        initial_json = None
+
+        self.matrix_domain = self.locust_user.host.removeprefix("https://matrix.")
+        self.user_id = f"@{self.user}:{self.matrix_domain}"
+
+        client = BSSpeke.Client(self.user_id, self.matrix_domain, self.password)
+        client_id = client.get_client_id()
+        blind = client.generate_blind()
+
+        # Request 1: Empty #####################################################
+        body = {
+            "identifier": {
+                "type": "m.id.user",
+                "user": self.user_id
+            }
+        }
+        with self.locust_user.client.request("POST", url, headers=headers, json=body, catch_response=True) as r1:
+            initial_json = r1.json()
+            session_id = r1.json().get("session", None)
+
+            # print("Got response: ", json.dumps(r1.js, indent=4))
+            if r1.status_code == HTTPStatus.UNAUTHORIZED: #401
+                r1.success()
+            else:
+                error = r1.json().get("error", "???")
+                errcode = r1.json().get("errcode", "???")
+                print(f"Got error response: {errcode} {error}")
+                return
+
+        # Request 2: BS-SPEKE OPRF
+        oprf_params = initial_json["params"]["m.login.bsspeke-ecc.oprf"]
+        curve = oprf_params["curve"]
+        phf_params = oprf_params["phf_params"]
+        blind_base64 = binascii.b2a_base64(blind, newline=False).decode('utf-8')
+
+        body = {
+            "identifier": {
+                "type": "m.id.user",
+                "user": self.user_id
+            },
+            "auth": {
+                "type": "m.login.bsspeke-ecc.oprf",
+                "curve": curve,
+                "blind": blind_base64,
+                "session": session_id
+            }
+        }
+        r2_params = None
+        # with self.locust_user.rest("POST", url, headers=headers, json=body) as r2:
+        with self.locust_user.client.request("POST", url, headers=headers, json=body, catch_response=True) as r2:
+            completed = r2.json().get("completed", [])
+            r2_params = r2.json().get("params", {})
+
+            if r2.status_code == HTTPStatus.UNAUTHORIZED: #401
+                r2.success()
+            else:
+                error = r2.json().get("error", "???")
+                errcode = r2.json().get("errcode", "???")
+                print(f"Got error response: {errcode} {error}")
+                return
+
+
+        # Request 3: BS-SPEKE Verify
+        verify_params = r2_params["m.login.bsspeke-ecc.verify"]
+        blind_salt_str = verify_params["blind_salt"]
+        B_str = verify_params["B"]
+        blind_salt = base64.b64decode(blind_salt_str)
+        B = base64.b64decode(B_str)
+        B_hex = binascii.b2a_hex(B).decode('utf-8')
+
+        A_bytes = client.generate_A(blind_salt, phf_params)
+        client.derive_shared_key(B)
+        verifier_bytes = client.generate_verifier()
+
+        A = binascii.b2a_base64(A_bytes, newline=False).decode('utf-8')
+        A_hex = binascii.b2a_hex(A_bytes).decode('utf-8')
+        verifier = binascii.b2a_base64(verifier_bytes, newline=False).decode('utf-8')
+
+        body = {
+            "identifier": {
+                "type": "m.id.user",
+                "user": self.user_id
+            },
+            "auth": {
+                "type": "m.login.bsspeke-ecc.verify",
+                "A": A,
+                "verifier": verifier,
+                "session": session_id
+            }
+        }
+        with self.locust_user.rest("POST", url, headers=headers, json=body) as r3:
+        # with self.client.request("POST", url, headers=headers, json=body, catch_response=True) as r3:
+            completed = r3.js.get("completed", [])
+            if r3.status_code != 200:
+                error = r3.js.get("error", "???")
+                errcode = r3.jsget("errcode", "???")
+                print(f"Got error response: {errcode} {error}")
+                return
+            print("Login success - Got response: ", json.dumps(r3.js, indent=4))
+
+
+            self.user_id = r3.js.get("user_id", None)
+            self.access_token = r3.js.get("access_token", None)
+            self.matrix_domain = self.user_id.split(":")[-1]
+            self.device_id = r3.js.get("device_id", None)
+
+
+
     @logged_in
     def room_send(
         self,
@@ -465,6 +716,97 @@ class LocustClient(Client):
         ))
         label = "/_matrix/client/v3/rooms/_/send/m.room.message/_"
         return self._send(RoomSendResponse, method, path, data, label, (room_id,))
+
+    @logged_in
+    def room_put_state(
+        self,
+        room_id: str,
+        event_type: str,
+        content: Dict[Any, Any],
+        state_key: str = "",
+    ) -> Union[RoomPutStateResponse, RoomPutStateError]:
+        """Send a state event to a room.
+
+        Calls receive_response() to update the client state if necessary.
+
+        Returns either a `RoomPutStateResponse` if the request was successful
+        or a `RoomPutStateError` if there was an error with the request.
+
+        Args:
+            room_id (str): The room id of the room to send the event to.
+            event_type (str): The type of the state to send.
+            content (Dict[Any, Any]): The content of the event to be sent.
+            state_key (str): The key of the state event to send.
+        """
+
+        method, path, data = Api.room_put_state(
+            self.access_token,
+            room_id,
+            event_type,
+            content,
+            state_key=state_key,
+        )
+
+        label = f"/_matrix/client/v3/rooms/_/state/{event_type}/_"
+        return self._send(RoomPutStateResponse, method, path, data, label, (room_id,))
+
+    @logged_in
+    def room_get_state(
+        self,
+        room_id: str,
+    ) -> Union[RoomGetStateResponse, RoomGetStateError]:
+        """Fetch state for a room.
+
+        Calls receive_response() to update the client state if necessary.
+
+        Returns either a `RoomGetStateResponse` if the request was successful
+        or a `RoomGetStateError` if there was an error with the request.
+
+        Args:
+            room_id (str): The room id of the room to fetch state from.
+        """
+
+        method, path = Api.room_get_state(
+            self.access_token,
+            room_id,
+        )
+        label = "/_matrix/client/v3/rooms/_/state/"
+        return self._send(RoomGetStateResponse, method, path, None, label, (room_id,))
+
+    @logged_in
+    def room_get_state_event(
+        self, room_id: str, event_type: str, state_key: str = ""
+    ) -> Union[RoomGetStateEventResponse, RoomGetStateEventError]:
+        """Fetch a state event from a room.
+
+        Calls receive_response() to update the client state if necessary.
+
+        Returns either a `RoomGetStateEventResponse` if the request was
+        successful or a `RoomGetStateEventError` if there was an error with
+        the request.
+
+        Args:
+            room_id (str): The room id of the room to fetch the event from.
+            event_type (str): The type of the state to fetch.
+            state_key (str): The key of the state event to fetch.
+        """
+
+        method, path = Api.room_get_state_event(
+            self.access_token, room_id, event_type, state_key=state_key
+        )
+
+        label = f"/_matrix/client/v3/rooms/_/state/{event_type}/_"
+        return self._send(RoomGetStateEventResponse,
+            method,
+            path,
+            None,
+            label,
+            (
+                event_type,
+                state_key,
+                room_id,
+            ),
+        )
 
     @logged_in
     def room_create(
@@ -674,6 +1016,35 @@ class LocustClient(Client):
         return self._send(RoomTypingResponse, method, path, data, label, (room_id,))
 
     @logged_in
+    def room_get_tags(
+        self,
+        room_id: str,
+    ) -> Tuple[RoomGetTagsResponse, RoomGetTagsError]:
+
+        method, path, data = self._build_request(ApiExt.get_tags(
+            self.access_token, self.user_id, room_id
+        ))
+
+        label = "/_matrix/client/v3/user/_/rooms/_/tags"
+        return self._send(RoomGetTagsResponse, method, path, data, label)
+
+    @logged_in
+    def room_set_tags(
+        self,
+        room_id: str,
+        tag: str,
+        order: float = None,
+    ) -> Tuple[RoomSetTagsResponse, RoomSetTagsError]:
+
+        method, path, data = self._build_request(ApiExt.set_tags(
+            self.access_token, self.user_id, room_id, tag, order
+        ))
+
+        label = "/_matrix/client/v3/user/_/rooms/_/tags"
+        return self._send(RoomSetTagsResponse, method, path, data, label)
+
+
+    @logged_in
     def update_receipt_marker(
         self,
         room_id: str,
@@ -800,7 +1171,8 @@ class LocustClient(Client):
             self.access_token, self.user_id, avatar_url
         ))
 
-        return self._send(ProfileSetAvatarResponse, method, path, data)
+        label = "/_matrix/client/v3/profile/_/avatar_url"
+        return self._send(ProfileSetAvatarResponse, method, path, data, label)
 
     @logged_in
     def sync(
