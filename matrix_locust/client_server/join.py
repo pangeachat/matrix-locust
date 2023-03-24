@@ -10,7 +10,7 @@ from locust.runners import MasterRunner, WorkerRunner
 
 import gevent
 from matrix_locust.users.matrixuser import MatrixUser
-from nio.responses import JoinError, LoginError
+from nio.responses import JoinError, LoginError, SyncError
 
 # Preflight ###############################################
 
@@ -74,7 +74,12 @@ class MatrixInviteAcceptorUser(MatrixUser):
                 return
 
         # Call /sync to get our list of invited rooms
-        self.matrix_client.sync()
+        response = self.matrix_client.sync()
+
+        if isinstance(response, SyncError):
+            logging.error("[%s] /sync error (%s): %s", self.matrix_client.user,
+                          response.status_code, response.message)
+
         invited_rooms = self.matrix_client.invited_rooms.keys()
 
         logging.info("User [%s] has %d pending invites", self.matrix_client.user, len(invited_rooms))
@@ -84,8 +89,10 @@ class MatrixInviteAcceptorUser(MatrixUser):
                 response = self.matrix_client.join(room_id)
 
                 if isinstance(response, JoinError):
-                    logging.info("[%s] Could not join room %s (attempt %d). Trying again...",
+                    logging.error("[%s] Could not join room %s (attempt %d). Trying again...",
                                  self.matrix_client.user, room_id, 4 - retries)
+                    logging.error("[%s] Code=%s, Message=%s", self.matrix_client.user,
+                                  response.status_code, response.message)
                     retries -= 1
                 else:
                     logging.info("[%s] Joined room %s", self.matrix_client.user, room_id)

@@ -125,8 +125,10 @@ class MatrixRoomCreatorUser(MatrixUser):
                 response = self.matrix_client.room_create(alias=None, name=room_name, invite=user_ids)
 
                 if isinstance(response, RoomCreateError):
-                    logging.info("[%s] Could not create room %s (attempt %d). Trying again...",
+                    logging.error("[%s] Could not create room %s (attempt %d). Trying again...",
                                  self.matrix_client.user, room_name, 4 - retries)
+                    logging.error("[%s] Code=%s, Message=%s", self.matrix_client.user,
+                                  response.status_code, response.message)
                     retries -= 1
                 else:
                     logging.info("[%s] Created room [%s]", self.matrix_client.user, response.room_id)
