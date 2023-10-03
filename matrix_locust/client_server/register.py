@@ -17,7 +17,10 @@ from nio.responses import RegisterErrorResponse
 @events.init.add_listener
 def on_locust_init(environment, **_kwargs):
     # Increase resource limits to prevent OS running out of descriptors
-    resource.setrlimit(resource.RLIMIT_NOFILE, (999999, 999999))
+    try:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (999999, 999999))
+    except ValueError as e:
+        logging.warning(f"Failed to increase the resource limit: {e}")
 
     # Multi-worker
     if isinstance(environment.runner, WorkerRunner):
