@@ -164,11 +164,6 @@ class MatrixChatUser(MatrixUser):
 
         # Spawn a Greenlet to act as this user's client, constantly /sync'ing with the server
         self.matrix_sync_task = gevent.spawn(self.sync_forever, client_sleep=None, timeout=30_000)
-        # self.matrix_sync_task = gevent.spawn(self.sync_forever, client_sleep=30, timeout=0)
-        # self.matrix_sync_task = gevent.spawn(self.sync_forever, client_sleep=15, timeout=0)
-
-        # while True:
-        #     response = self.matrix_client.sync(0, None, None, None, None)
 
         # Wait a bit before we take our first action
         self.wait()
@@ -244,7 +239,7 @@ class MatrixChatUser(MatrixUser):
         full_state: Optional[bool] = None,
         set_presence: Optional[str] = None,
     ):
-        # document that client_sleep is in seconds
+        # client_sleep is in seconds
 
         # Continually call the /sync endpoint
         # Put anything that the user might care about into our instance variables where the
@@ -271,37 +266,8 @@ class MatrixChatUser(MatrixUser):
         # Store only the most recent 10 messages, regardless of how many we had before or how many we just received
         self.recent_messages[room.room_id] = self.room_messages[room.room_id][-10:]
 
-    # def wait_time(self):
-        # return 80
-        #return random.expovariate(0.05) # 100% - .481
-    # @task(57) # ~86% - .416 <>  -- fails around 2.5k?
-    # @task(80) # ~70% - .331 <>
-    #@task(103) # ~52% - .254 <>
-    # @task(115) # ~42% - .209 <>
-        #  return random.expovariate(0.0275) # 416 <>
-        # return random.expovariate(0.025) # 361
-        # return random.expovariate(0.02) # 344
-        # return random.expovariate(0.0195) # 346
-        # return random.expovariate(0.0185) # 327 <>
-        # return random.expovariate(0.018) # 302	 431???
-        # return random.expovariate(0.0125) # 256 <>
-        # return random.expovariate(0.011) # 235
-        # return random.expovariate(0.01) #205 <>
-        # return random.expovariate(0.005) #90
-        # return random.expovariate(0.001) #61
 
-
-    # % of original, messages per minute per user
-    # not using this, eats up CPU cycles
-    #@task(23) # 100% - .481
-    #@task(46) # ~90% - .436
-    # @task(57) # ~86% - .416 <>  -- fails around 2.5k?
-    #@task(69) # ~73% - .348
-    # @task(80) # ~70% - .331 <>
-    #@task(92) # ~63% - .301
-    #@task(103) # ~52% - .254 <>
-    # @task(115) # ~42% - .209 <>
-    @task(11)
+    @task(23)
     def do_nothing(self):
         self.wait()
 
