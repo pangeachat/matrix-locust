@@ -51,7 +51,7 @@ from nio.api import (
     _FilterT,
 )
 from nio.events import MegolmEvent
-from nio.log import logger_group
+# from nio.log import logger_group
 from nio.responses import (
     DeleteDevicesAuthResponse,
     DeleteDevicesResponse,
@@ -122,9 +122,10 @@ import base64
 import sys
 import os
 
+# todo: make this optional import only when needed
 # have to update module path since bsspeke not in package (_bsspeke_cffi)
-sys.path.append(os.path.join(os.path.dirname(__file__), "..", "bsspeke", "python"))
-from ..bsspeke.python import BSSpeke
+#sys.path.append(os.path.join(os.path.dirname(__file__), "..", "bsspeke", "python"))
+#from ..bsspeke.python import BSSpeke
 
 from matrix_locust.nio.contrib import (
     ApiExt,
@@ -333,7 +334,13 @@ class LocustClient(Client):
 
         return response
 
-    def register(self, username, password, device_name=""):
+    def register(
+            self,
+            username,
+            password,
+            device_name: Optional[str] = "",
+            token: Optional[str] = ""
+    ):
         """Register with homeserver.
 
         Calls receive_response() to update the client state if necessary.
@@ -344,6 +351,7 @@ class LocustClient(Client):
             device_name (str): A display name to assign to a newly-created
                 device. Ignored if the logged in device corresponds to a
                 known device.
+            token (str): Optional registration token
 
         Returns a 'RegisterResponse' if successful.
         """
@@ -375,16 +383,6 @@ class LocustClient(Client):
                     logging.error("User [%s] No UIAA flows for /register\nResponse: %s", self.user, response1.js)
                     self.locust_user.environment.runner.quit()
                     return
-                #for flow in flows:
-                #  stages = flow.get("stages", [])
-                #  if len(stages) > 0:
-                #    logging.info("Found UIAA flow " + " ".join(stages))
-
-                # FIXME: Currently we only support dummy auth
-                # TODO: Add support for MSC 3231 registration tokens
-                # request_body["auth"] = {
-                # "type": "m.login.dummy"
-                # }
 
                 session_id = response1.js.get("session", None)
                 if session_id is None:
@@ -392,18 +390,43 @@ class LocustClient(Client):
                 else:
                     data["auth"]["session"] = session_id
 
-                with self.locust_user.rest("POST", path, json=data) as response2:
-                    if response2.status_code == HTTPStatus.OK or response2.status_code == HTTPStatus.CREATED: # 200 or 201
-                        logging.info("User [%s] Success!", self.user)
-                        self.user_id = response2.js.get("user_id", None)
-                        self.access_token = response2.js.get("access_token", None)
-                        self.matrix_domain = self.user_id.split(":")[-1]
-                        if self.user_id is None or self.access_token is None:
-                            logging.error("User [%s] Failed to parse /register response!\nResponse: %s", self.user,
-                                        response2.js)
-                    else:
-                        logging.error("User[%s] /register failed with status code %d\nResponse: %s", self.user,
-                                response2.status_code, response2.js)
+                # Pick the first available login flow and attempt to use it
+                for flow in flows:
+                    stages = flow.get("stages", [])
+                    if len(stages) > 0:
+                        logging.info(f"Found UIAA flow [{', '.join(stages)}]")
+
+                        for stage in stages:
+                            data["auth"]["type"] = stage
+
+                            if stage == "m.login.dummy":
+                                pass
+                            elif stage == "m.login.password":
+                                data["auth"]["identifier"]["type"] = "m.id.user"
+                                data["auth"]["identifier"]["user"] = self.user
+                                data["auth"]["password"] = self.password
+                            elif stage == "m.login.registration_token":
+                                data["auth"]["token"] = token
+
+                            with self.locust_user.rest("POST", path, json=data) as response2:
+                                print(response2.js)
+                                if response2.status_code == HTTPStatus.OK or response2.status_code == HTTPStatus.CREATED: # 200 or 201
+                                    logging.info("User [%s] Success!", self.user)
+                                    self.user_id = response2.js.get("user_id", None)
+                                    self.access_token = response2.js.get("access_token", None)
+                                    self.matrix_domain = self.user_id.split(":")[-1]
+                                    if self.user_id is None or self.access_token is None:
+                                        logging.error("User [%s] Failed to parse /register response!\nResponse: %s", self.user,
+                                                    response2.js)
+                                        return
+                                    self.locust_user.update_tokens()
+                                    return
+                                elif response2.status_code == HTTPStatus.UNAUTHORIZED: #401
+                                    continue
+                                else:
+                                    logging.error("User[%s] /register failed with status code %d\nResponse: %s", self.user,
+                                            response2.status_code, response2.js)
+                                    break
             else:
                 logging.error("User[%s] /register failed with status code %d\nResponse: %s", self.user,
                             response1.status_code, response1.js)
@@ -432,10 +455,18 @@ class LocustClient(Client):
 
 
         # Request 1: Empty #####################################################
-        with self.locust_user.rest("POST", url, headers=headers, json={}) as r1:
-            initial_json = r1.js
-            session_id = r1.js.get("session", None)
+        with self.locust_user.client.request("POST", url, headers=headers, json={}, catch_response=True) as r1:
+            initial_json = r1.json()
+            session_id = r1.json().get("session", None)
+
             # print("Got response: ", json.dumps(r1.js, indent=4))
+            if r1.status_code == HTTPStatus.UNAUTHORIZED: #401
+                r1.success()
+            else:
+                error = r1.json().get("error", "???")
+                errcode = r1.json().get("errcode", "???")
+                print(f"Got error response: {errcode} {error}")
+                return
 
         # Request 3: Terms of service ##########################################
         body = {
@@ -445,9 +476,17 @@ class LocustClient(Client):
                 "session": session_id
             }
         }
-        with self.locust_user.rest("POST", url, headers=headers, json=body) as r3:
-            completed = r3.js.get("completed", [])
+        with self.locust_user.client.request("POST", url, headers=headers, json=body, catch_response=True) as r3:
+            completed = r3.json().get("completed", [])
+
             # print("Got response: ", json.dumps(r3.js, indent=4))
+            if r3.status_code == HTTPStatus.UNAUTHORIZED: #401
+                r3.success()
+            else:
+                error = r3.json().get("error", "???")
+                errcode = r3.json().get("errcode", "???")
+                print(f"Got error response: {errcode} {error}")
+                return
 
         # Request 4: Claiming Username ##########################################
         body = {
@@ -457,9 +496,17 @@ class LocustClient(Client):
                 "username": self.user
             }
         }
-        with self.locust_user.rest("POST", url, headers=headers, json=body) as r4:
-            completed = r4.js.get("completed", [])
+        with self.locust_user.client.request("POST", url, headers=headers, json=body, catch_response=True) as r4:
+            completed = r4.json().get("completed", [])
+
             # print("Got response: ", json.dumps(r4.js, indent=4))
+            if r4.status_code == HTTPStatus.UNAUTHORIZED: #401
+                r4.success()
+            else:
+                error = r4.json().get("error", "???")
+                errcode = r4.json().get("errcode", "???")
+                print(f"Got error response: {errcode} {error}")
+                return
 
         # Request 6: BS-SPEKE OPRF
         oprf_params = initial_json["params"]["m.enroll.bsspeke-ecc.oprf"]
@@ -475,14 +522,18 @@ class LocustClient(Client):
             }
         }
         bs_speke_params = None
-        with self.locust_user.rest("POST", url, headers=headers, json=body) as r6:
-            bs_speke_params = r6.js
-            completed = r6.js.get("completed", [])
-            r6_params = r6.js.get("params", {})
-            if r6.status_code != 401:
-                error = r6.js.get("error", "???")
-                errcode = r6.js.get("errcode", "???")
-                print("Got error response: %s %s" % (errcode, error))
+        with self.locust_user.client.request("POST", url, headers=headers, json=body, catch_response=True) as r6:
+            bs_speke_params = r6.json()
+            completed = r6.json().get("completed", [])
+            r6_params = r6.json().get("params", {})
+
+            if r6.status_code == HTTPStatus.UNAUTHORIZED: #401
+                r6.success()
+            else:
+                error = r6.json().get("error", "???")
+                errcode = r6.json().get("errcode", "???")
+                print(f"Got error response: {errcode} {error}")
+                return
             # print("OPRF success - Got response: ", json.dumps(r6.js, indent=4))
 
         # Request 7: BS-SPEKE Save
@@ -505,6 +556,7 @@ class LocustClient(Client):
                 "session": session_id
             }
         }
+        # with self.client.request("POST", url, headers=headers, json=body, catch_response=True) as r3:
         with self.locust_user.rest("POST", url, headers=headers, json=body) as r7:
             completed = r7.js.get("completed", [])
             if r7.status_code != 200:
@@ -578,7 +630,6 @@ class LocustClient(Client):
             }
         }
         r2_params = None
-        # with self.locust_user.rest("POST", url, headers=headers, json=body) as r2:
         with self.locust_user.client.request("POST", url, headers=headers, json=body, catch_response=True) as r2:
             completed = r2.json().get("completed", [])
             r2_params = r2.json().get("params", {})
@@ -625,7 +676,7 @@ class LocustClient(Client):
             completed = r3.js.get("completed", [])
             if r3.status_code != 200:
                 error = r3.js.get("error", "???")
-                errcode = r3.jsget("errcode", "???")
+                errcode = r3.js.get("errcode", "???")
                 print(f"Got error response: {errcode} {error}")
                 return
             print("Login success - Got response: ", json.dumps(r3.js, indent=4))
@@ -714,7 +765,7 @@ class LocustClient(Client):
         method, path, data = self._build_request(Api.room_send(
             self.access_token, room_id, message_type, content, uuid
         ))
-        label = "/_matrix/client/v3/rooms/_/send/m.room.message/_"
+        label = f"/_matrix/client/v3/rooms/_/send/{message_type}/_"
         return self._send(RoomSendResponse, method, path, data, label, (room_id,))
 
     @logged_in

@@ -69,7 +69,7 @@ class MatrixRegisterUser(MatrixUser):
         retries = 3
         while retries > 0:
             # Register with the server to get a user_id and access_token
-            response = self.matrix_client.register(self.matrix_client.user, self.matrix_client.password)
+            response = self.matrix_client.register(self.matrix_client.user, self.matrix_client.password, token="")
 
             if isinstance(response, RegisterErrorResponse):
                 logging.info("[%s] Could not register user (attempt %d). Trying again...",
