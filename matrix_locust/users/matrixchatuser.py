@@ -44,7 +44,13 @@ from locust.runners import MasterRunner, WorkerRunner
 
 from matrix_locust.users.matrixuser import MatrixUser
 from nio import MatrixRoom, RoomMessageText
-from nio.responses import RoomSendError, RoomMessagesError, SyncError, LoginError
+from nio.responses import (
+    LoginError,
+    SyncError,
+    RoomSendError,
+    RoomMessagesError,
+    ProfileSetDisplayNameError,
+)
 
 from typing import Optional
 
@@ -56,7 +62,10 @@ from nio.api import _FilterT
 @events.init.add_listener
 def on_locust_init(environment, **_kwargs):
     # Increase resource limits to prevent OS running out of descriptors
-    resource.setrlimit(resource.RLIMIT_NOFILE, (999999, 999999))
+    try:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (999999, 999999))
+    except ValueError as e:
+        logging.warning(f"Failed to increase the resource limit: {e}")
 
     # Multi-worker
     if isinstance(environment.runner, WorkerRunner):
@@ -154,7 +163,12 @@ class MatrixChatUser(MatrixUser):
                     break
 
         # Spawn a Greenlet to act as this user's client, constantly /sync'ing with the server
-        self.matrix_sync_task = gevent.spawn(self.sync_forever, timeout=30_000)
+        self.matrix_sync_task = gevent.spawn(self.sync_forever, client_sleep=None, timeout=30_000)
+        # self.matrix_sync_task = gevent.spawn(self.sync_forever, client_sleep=30, timeout=0)
+        # self.matrix_sync_task = gevent.spawn(self.sync_forever, client_sleep=15, timeout=0)
+
+        # while True:
+        #     response = self.matrix_client.sync(0, None, None, None, None)
 
         # Wait a bit before we take our first action
         self.wait()
@@ -223,12 +237,15 @@ class MatrixChatUser(MatrixUser):
 
     def sync_forever(
         self,
+        client_sleep: Optional[float] = None,
         timeout: Optional[int] = None,
         sync_filter: _FilterT = None,
         since: Optional[str] = None,
         full_state: Optional[bool] = None,
         set_presence: Optional[str] = None,
     ):
+        # document that client_sleep is in seconds
+
         # Continually call the /sync endpoint
         # Put anything that the user might care about into our instance variables where the
         # user @task's can find it
@@ -237,10 +254,13 @@ class MatrixChatUser(MatrixUser):
 
             if isinstance(response, SyncError):
                 logging.error("[%s] /sync error (%s): %s",
-                              self.client.user, response.status_code, response.message)
+                              self.matrix_client.user, response.status_code, response.message)
             else:
                 if self.initial_sync_token is None:
                     self.initial_sync_token = response.next_batch
+
+            if not(client_sleep is None):
+                gevent.sleep(client_sleep)
 
     def message_callback(self, room: MatrixRoom, event: RoomMessageText) -> None:
         # Add the new messages to whatever we had before (if anything)
@@ -251,8 +271,37 @@ class MatrixChatUser(MatrixUser):
         # Store only the most recent 10 messages, regardless of how many we had before or how many we just received
         self.recent_messages[room.room_id] = self.room_messages[room.room_id][-10:]
 
+    # def wait_time(self):
+        # return 80
+        #return random.expovariate(0.05) # 100% - .481
+    # @task(57) # ~86% - .416 <>  -- fails around 2.5k?
+    # @task(80) # ~70% - .331 <>
+    #@task(103) # ~52% - .254 <>
+    # @task(115) # ~42% - .209 <>
+        #  return random.expovariate(0.0275) # 416 <>
+        # return random.expovariate(0.025) # 361
+        # return random.expovariate(0.02) # 344
+        # return random.expovariate(0.0195) # 346
+        # return random.expovariate(0.0185) # 327 <>
+        # return random.expovariate(0.018) # 302	 431???
+        # return random.expovariate(0.0125) # 256 <>
+        # return random.expovariate(0.011) # 235
+        # return random.expovariate(0.01) #205 <>
+        # return random.expovariate(0.005) #90
+        # return random.expovariate(0.001) #61
 
-    @task(23)
+
+    # % of original, messages per minute per user
+    # not using this, eats up CPU cycles
+    #@task(23) # 100% - .481
+    #@task(46) # ~90% - .436
+    # @task(57) # ~86% - .416 <>  -- fails around 2.5k?
+    #@task(69) # ~73% - .348
+    # @task(80) # ~70% - .331 <>
+    #@task(92) # ~63% - .301
+    #@task(103) # ~52% - .254 <>
+    # @task(115) # ~42% - .209 <>
+    @task(11)
     def do_nothing(self):
         self.wait()
 
@@ -332,7 +381,11 @@ class MatrixChatUser(MatrixUser):
         user_number = self.matrix_client.user.split(".")[-1]
         random_number = random.randint(1,1000)
         new_name = "User %s (random=%d)" % (user_number, random_number)
-        self.matrix_client.set_displayname(new_name)
+
+        response = self.matrix_client.set_displayname(new_name)
+        if isinstance(response, ProfileSetDisplayNameError):
+            logging.error("[%s] failed to set displayname to %s: Code=%s, Message=%s",
+                          self.matrix_client.user, new_name, response.status_code, response.message)
 
 
     @task(3)
@@ -349,6 +402,7 @@ class MatrixChatUser(MatrixUser):
                 self.interrupt()
             else:
                 self.room_id = self.user.get_random_roomid()
+                self.reacted_messages = []
 
                 if self.room_id is None:
                     self.interrupt()
@@ -388,7 +442,6 @@ class MatrixChatUser(MatrixUser):
 
         @task
         def send_reaction(self):
-            #logging.info("User [%s] sending reaction" % self.user.username)
             # Pick a recent message from the selected room,
             # and react to it
             if len(self.user.recent_messages.get(self.room_id, [])) < 1:
@@ -403,9 +456,19 @@ class MatrixChatUser(MatrixUser):
                     "key": reaction,
                 }
             }
+
+            # Prevent errors with reacting to the same message with the same reaction
+            if (message, reaction) in self.reacted_messages:
+                return
+            else:
+                self.reacted_messages.append((message, reaction))
+
+            # logging.info("[%s] sending reaction %s to message %s in room %s with event %s",
+            #              self.user.matrix_client.user, reaction, message, self.room_id, message.event_id)
             response = self.user.matrix_client.room_send(self.room_id, "m.reaction", content)
             if isinstance(response, RoomSendError):
-                logging.error("[%s] failed to send reaction in room [%s]", self.user.matrix_client.user, self.room_id)
+                logging.error("[%s] failed to send reaction in room [%s]: Code=%s, Message=%s",
+                              self.user.matrix_client.user, response.room_id, response.status_code, response.message)
 
 
         @task
