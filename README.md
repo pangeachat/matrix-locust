@@ -23,8 +23,9 @@ for an Ansible playbook that can be used to install and configure Synapse,
 Dendrite, and Conduit, along with any required databases and other
 homeserver accessories.
 
-You also need [Locust](https://github.com/locustio/locust) (v2.14.0+) installed
-on the machine that you will be using to generate load on your server.
+For the machine that you will be using to generate load on your server, you will need:
+* [Locust](https://github.com/locustio/locust) (v2.14.0+)
+* [matrix-nio](https://github.com/poljar/matrix-nio)
 
 ### Generating users and rooms
 
