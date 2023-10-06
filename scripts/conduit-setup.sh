@@ -7,7 +7,7 @@ cd /matrix
 ulimit -Sn `ulimit -Hn`
 
 # Reset environment
-ansible-playbook -i inventory/hosts setup.yml --tags=stop
+just stop-all
 
 # setup_type either may be default 'full-setup' or a variant like 'full-setup-sqlite'
 full_setup_prefix="full-setup"
@@ -22,17 +22,16 @@ if [ "${setup_type:0:${#full_setup_prefix}}" = "$full_setup_prefix" ]; then
     sed -i 's/matrix_homeserver_implementation: dendrite/matrix_homeserver_implementation: conduit/g' inventory/host_vars/$server/vars.yml
     sed -i 's/matrix_synapse_workers_enabled: true/matrix_synapse_workers_enabled: false/g' inventory/host_vars/$server/vars.yml
     sed -i 's/matrix_synapse_redis_enabled: true/matrix_synapse_redis_enabled: false/g' inventory/host_vars/$server/vars.yml
-    sed -i 's/matrix_postgres_enabled: true/matrix_postgres_enabled: false/g' inventory/host_vars/$server/vars.yml
+    sed -i 's/devture_postgres_enabled: true/devture_postgres_enabled: false/g' inventory/host_vars/$server/vars.yml
     sed -i 's/matrix_redis_enabled: true/matrix_redis_enabled: false/g' inventory/host_vars/$server/vars.yml
 
     # Ansible fails setup if enabled and not using synapse...
-    sed -i 's/matrix_synapse_ext_password_provider_shared_secret_auth_enabled: true/matrix_synapse_ext_password_provider_shared_secret_auth_enabled: false/g' inventory/host_vars/$server/vars.yml
+    #sed -i 's/matrix_synapse_ext_password_provider_shared_secret_auth_enabled: true/matrix_synapse_ext_password_provider_shared_secret_auth_enabled: false/g' inventory/host_vars/$server/vars.yml
 
-    ansible-playbook -i inventory/hosts setup.yml --tags=setup-all
-
+    just setup-all
 else # reset
     rm -rf conduit sqlite/*
-    ansible-playbook -i inventory/hosts setup.yml --tags=setup-conduit
+    just run-tags install-conduit
 fi
 
 # Server specific config setup
@@ -40,5 +39,5 @@ if [ "$setup_type" = "full-setup-sqlite" ] || [ "$setup_type" = "reset-sqlite" ]
     sed -i 's/database_backend = "rocksdb"/database_backend = "sqlite"/g' conduit/config/conduit.toml
 fi
 
-ansible-playbook -i inventory/hosts setup.yml --tags=start
+just start-all
 exit

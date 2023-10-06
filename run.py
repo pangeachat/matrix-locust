@@ -9,7 +9,11 @@ import os
 from argparse import Namespace
 
 # Define JSON test schema and set default parameters
+TEST_SCHEMA_PARAMETER_AUTOQUIT = 5
+TEST_SCHEMA_PARAMETER_OUTPUT_DIR = os.getcwd()
+
 TEST_SCHEMA = {
+    "parameter_import": None,
     "name": None,
     "script": None,
     "pre_script_command": None,
@@ -19,8 +23,8 @@ TEST_SCHEMA = {
     "num_users": None,
     "spawn_rate": None,
     "runtime": None,
-    "autoquit": 5,
-    "output_dir": os.getcwd()
+    "autoquit": TEST_SCHEMA_PARAMETER_AUTOQUIT,
+    "output_dir": TEST_SCHEMA_PARAMETER_OUTPUT_DIR
 }
 
 def num_workers_checker(value):
@@ -103,6 +107,25 @@ else:
             # Define script schema to allow for omitting entries if desired
             test_dict_json = TEST_SCHEMA.copy()
             test_dict_json.update(test_dict)
+
+            # Use parameters defined in another file if not defined locally
+            if not (test_dict_json.get("parameter_import") is None):
+                with open(test_dict_json["parameter_import"], "r", encoding="utf-8") as parameter_file:
+                    parameter_file_dict = json.load(parameter_file)
+
+                    for key in TEST_SCHEMA.keys():
+                        if test_dict_json[key] is None and not (parameter_file_dict.get(key) is None):
+                            test_dict_json[key] = parameter_file_dict[key]
+
+                    # Handle keys which are not none by default
+                    if test_dict_json["autoquit"] == TEST_SCHEMA_PARAMETER_AUTOQUIT and \
+                        not (parameter_file_dict.get("autoquit") is None):
+                        test_dict_json["autoquit"] = parameter_file_dict["autoquit"]
+                    if test_dict_json["output_dir"] == TEST_SCHEMA_PARAMETER_OUTPUT_DIR and \
+                        not (parameter_file_dict.get("output_dir") is None):
+                        test_dict_json["output_dir"] = parameter_file_dict["output_dir"]
+
+            # Run scripts
             test = Namespace(**test_dict_json)
 
             if not (test.pre_script_command is None):

@@ -1,26 +1,35 @@
 #!/bin/env python3
 
+import csv
 import logging
 import resource
 
 from locust import task, constant
 from locust import events
-from locust.runners import MasterRunner
+from locust.runners import MasterRunner, WorkerRunner
 
 import gevent
-from matrixuser import MatrixUser
+from matrix_locust.users.matrixuser import MatrixUser
+from nio.responses import RegisterErrorResponse
 
 # Preflight ####################################################################
 
 @events.init.add_listener
 def on_locust_init(environment, **_kwargs):
     # Increase resource limits to prevent OS running out of descriptors
-    resource.setrlimit(resource.RLIMIT_NOFILE, (999999, 999999))
+    try:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (999999, 999999))
+    except ValueError as e:
+        logging.warning(f"Failed to increase the resource limit: {e}")
 
-    # Register event hooks
-    if not isinstance(environment.runner, MasterRunner):
+    # Multi-worker
+    if isinstance(environment.runner, WorkerRunner):
         print(f"Registered 'load_users' handler on {environment.runner.client_id}")
         environment.runner.register_message("load_users", MatrixRegisterUser.load_users)
+    # Single-worker
+    elif not isinstance(environment.runner, WorkerRunner) and not isinstance(environment.runner, MasterRunner):
+        # Open our list of users
+        MatrixRegisterUser.worker_users = csv.DictReader(open("users.csv"))
 
 ################################################################################
 
@@ -38,6 +47,9 @@ class MatrixRegisterUser(MatrixUser):
 
     @task
     def register_user(self):
+        # Multiple locust users re-use the same class instance, so need to reset the state
+        self.reset_client()
+
         # Load the next user who needs to be registered
         try:
             user = next(MatrixRegisterUser.worker_users)
@@ -47,29 +59,24 @@ class MatrixRegisterUser(MatrixUser):
             gevent.sleep(999999)
             return
 
-        self.username = user["username"]
-        self.password = user["password"]
+        self.matrix_client.user = user["username"]
+        self.matrix_client.password = user["password"]
 
-        if self.username is None or self.password is None:
-            #print("Error: Couldn't get username/password")
+        if self.matrix_client.user is None or self.matrix_client.password is None:
             logging.error("Couldn't get username/password. Skipping...")
             return
 
         retries = 3
         while retries > 0:
             # Register with the server to get a user_id and access_token
-            self.register()
+            response = self.matrix_client.register(self.matrix_client.user, self.matrix_client.password, token="")
 
-            # The register() method sets user_id and access_token
-            if self.user_id is not None and self.access_token is not None:
-                # Save access tokens
-                user_update_request = { "username": self.username, "user_id": self.user_id,
-                                        "access_token": self.access_token, "sync_token": "" }
-                self.environment.runner.send_message("update_tokens", user_update_request)
-                return
-            else:
+            if isinstance(response, RegisterErrorResponse):
                 logging.info("[%s] Could not register user (attempt %d). Trying again...",
-                             self.username, 4 - retries)
+                             self.matrix_client.user, 4 - retries)
                 retries -= 1
+                continue
 
-        logging.error("Error registering user %s. Skipping...", self.username)
+            return
+
+        logging.error("Error registering user %s. Skipping...", self.matrix_client.user)

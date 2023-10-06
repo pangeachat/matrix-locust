@@ -1,0 +1,27 @@
+[tool.poetry]
+name = "matrix-locust"
+version = "0.1.0"
+description = "Load testing for Matrix in Python using Locust"
+license = "Apache-2.0"
+authors = [
+    "Charles Wright <cvwright@futo.org>",
+    "Michael Hollister <michael@futo.org>"
+]
+readme = "README.md"
+repository = "https://gitlab.futo.org/load-testing/matrix-locust"
+keywords = ["matrix", "locust", "loadtest"]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+locust = "2.17.0"
+matrix-nio = "0.21.2"
+
+[tool.poetry.group.circles]
+optional = true
+
+[tool.poetry.group.circles.dependencies]
+cffi = "1.16.0"
+
+[build-system]
+requires = ["poetry-core>=1.0.0",]
+build-backend = "poetry.core.masonry.api"
