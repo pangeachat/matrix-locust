@@ -122,10 +122,12 @@ import base64
 import sys
 import os
 
-# todo: make this optional import only when needed
-# have to update module path since bsspeke not in package (_bsspeke_cffi)
-#sys.path.append(os.path.join(os.path.dirname(__file__), "..", "bsspeke", "python"))
-#from ..bsspeke.python import BSSpeke
+# BSSpeke UIA stages are optional
+try:
+    sys.path.append(os.path.join(os.path.dirname(__file__), "..", "bsspeke", "python"))
+    from ..bsspeke.python import BSSpeke
+except ImportError:
+    logging.warning("Optional BSSpeke module not found. BSSpeke UIA stages will failif used.")
 
 from matrix_locust.nio.contrib import (
     ApiExt,
