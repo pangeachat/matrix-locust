@@ -23,9 +23,37 @@ for an Ansible playbook that can be used to install and configure Synapse,
 Dendrite, and Conduit, along with any required databases and other
 homeserver accessories.
 
-For the machine that you will be using to generate load on your server, you will need:
-* [Locust](https://github.com/locustio/locust) (v2.14.0+)
-* [matrix-nio](https://github.com/poljar/matrix-nio)
+**Installation steps for the machine you will be using to generate load on your
+server:**
+```console
+pip install --user pipx
+pipx install poetry
+poetry install
+```
+
+There is also a Dockerfile should you wish to build a container:
+```sudo docker build --tag futo/matrix-locust:latest .```
+
+Make sure to expose port `8089` in the container for access to the web UI.
+
+**BS-SPEKE / FUTO Circles setup (optional):**
+
+If you are using [swiclops](https://gitlab.futo.org/cvwright/swiclops) on your
+server and want to support the added UIA stages, you can install the
+dependencies as follows:
+1. Install python3 development:
+  * Debian: `sudo apt install python3-dev`
+  * RPM: `sudo dnf install python3-devel`
+2. Setup the repo and build the module:
+```console
+git submodule init
+git submodule update
+poetry install --with circles
+cd matrix_locust/bsspeke
+make
+cd python
+python bsspeke_build.py
+```
 
 ### Generating users and rooms
 
@@ -36,7 +64,7 @@ as well as the set of rooms where they will chat with each other.
 First we generate the usernames and passwords.
 
 ```console
-[user@host matrix-locust]$ python3 generate_users.py
+python generate_users.py
 ```
 
 This generates 1000 users by default and saves the usernames and passwords to
@@ -48,7 +76,7 @@ The `generate_rooms.py` script generates as many rooms as there are users
 in `users.csv`.
 
 ```console
-[user@host matrix-locust]$ python3 generate_rooms.py
+python generate_rooms.py
 ```
 
 The script decides how many users should be in each room according to an "80/20"
@@ -84,31 +112,62 @@ server).
 1. Registering user accounts
 
 ```console
-$ python run.py matrix-locust/client_server/register.py
+poetry run python run.py matrix-locust/client_server/register.py
 ```
 
 2. Creating rooms
 
 ```console
-$ python run.py matrix-locust/client_server/create_room.py
+poetry run python run.py matrix-locust/client_server/create_room.py
 ```
 
 3. Accepting invites to join rooms
 
 ```console
-$ python run.py matrix-locust/client_server/join.py
+poetry run python run.py matrix-locust/client_server/join.py
 ```
 
 4. Normal chat activity -- Accepting any pending invites, sending messages, paginating rooms
 
 ```console
-$ python run.py locust-run-users.py
+poetry run python run.py locust-run-users.py
 ```
 
 You can also directly run Locust without using the helper `run.py` script
 if you prefer to have more control of the Locust parameters. See the
 [Locust Configuration](https://docs.locust.io/en/stable/configuration.html)
 section in the documentation for further details.
+
+## Known issues
+
+**Locust becomes unstable/behaves in an undefined manner:**
+
+Sometimes if you are running a load test that has more than 5,000 users, you
+may experience undefined behavior, where you may requests may return error
+responses or you may experience highly volatile RPS metrics. For large scale
+load testing, our current efforts are on developing
+[matrix-goose](https://gitlab.futo.org/load-testing/matrix-goose) for
+larger-scale and eventually distributed load testing. You can attempt to run
+large-scale load tests with matrix-locust, but be aware you may encounter
+potential instability.
+
+**Locust uses a lot of system resources:**
+
+This is another motivating reason why we are focusing on developing
+[matrix-goose](https://gitlab.futo.org/load-testing/matrix-goose) for
+large-scale load testing. For a more lightweight version of matrix-locust,
+you can checkout the `legacy` branch that is more lightweight, but with less
+capabilities and features.
+
+**I see warnings of "Failed to increase the resource limit":**
+
+You can ignore this warning if you are running load tests with under 1,000
+users. If you are running tests with more than 1,000 users, you need to ensure
+your file descriptor limit is high enough so all the locust users can make
+their http requests. You can either run the load test with admin privileges
+to automatically increase the limit or change the descriptor limit yourself
+(e.g. `sudo ulimit -Sn 8192`).
+
 
 ## Running automated tests
 
@@ -135,4 +194,3 @@ The base class for interacting with a Matrix homeserver is [MatrixUser](./matrix
 
 For an example of a class that extends `MatrixUser` to generate traffic
 like a real user, see [MatrixChatUser](./matrixchatuser.py).
-
