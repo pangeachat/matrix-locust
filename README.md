@@ -112,19 +112,19 @@ server).
 1. Registering user accounts
 
 ```console
-poetry run python run.py matrix-locust/client_server/register.py
+poetry run python run.py matrix_locust/client_server/register.py
 ```
 
 2. Creating rooms
 
 ```console
-poetry run python run.py matrix-locust/client_server/create_room.py
+poetry run python run.py matrix_locust/client_server/create_room.py
 ```
 
 3. Accepting invites to join rooms
 
 ```console
-poetry run python run.py matrix-locust/client_server/join.py
+poetry run python run.py matrix_locust/client_server/join.py
 ```
 
 4. Normal chat activity -- Accepting any pending invites, sending messages, paginating rooms
