@@ -52,7 +52,7 @@ poetry install --with circles
 cd matrix_locust/bsspeke
 make
 cd python
-python bsspeke_build.py
+poetry run python ./bsspeke_build.py
 ```
 
 ### Generating users and rooms
