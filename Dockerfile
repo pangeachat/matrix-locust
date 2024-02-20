@@ -10,6 +10,9 @@ WORKDIR /usr/src/app
 # Clone the repository into the working directory
 RUN git clone https://gitlab.futo.org/load-testing/matrix-locust.git .
 
+# Fix externally-managed-envrionment errors: https://stackoverflow.com/a/76641565
+RUN rm /usr/lib/python3.11/EXTERNALLY-MANAGED
+
 # Install the dependencies using Poetry without creating a virtual environment
 RUN poetry config virtualenvs.create false && \
     poetry install --only main --no-root
