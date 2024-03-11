@@ -15,6 +15,14 @@ from nio.responses import RoomCreateError, LoginError
 
 # Preflight ####################################################################
 
+def username_to_userid(username, domain=None):
+    user_id = username
+    if not user_id.startswith("@"):
+        user_id = "@" + username
+    if domain is not None and not ":" in user_id:
+        user_id += ":" + domain
+    return user_id
+
 @events.init.add_listener
 def on_locust_init(environment, **_kwargs):
     # Increase resource limits to prevent OS running out of descriptors
@@ -49,7 +57,7 @@ def on_test_start(environment, **_kwargs):
         # with the list of other users who should be invited to each
         MatrixRoomCreatorUser.worker_rooms_for_users = {}
         for room_name, room_users in rooms.items():
-            first_user = room_users[0]
+            first_user = username_to_userid(room_users[0])
             user_rooms = MatrixRoomCreatorUser.worker_rooms_for_users.get(first_user, [])
             room_info = {
                 "name": room_name,
@@ -105,13 +113,8 @@ class MatrixRoomCreatorUser(MatrixUser):
                 logging.error("Login failed for User [%s]", self.matrix_client.user)
                 return
 
-        def username_to_userid(uname):
-            uid = uname + ":" + self.matrix_client.matrix_domain
-            if not uid.startswith("@"):
-                uid = "@" + uid
-            return uid
-
-        my_rooms_info = MatrixRoomCreatorUser.worker_rooms_for_users.get(self.matrix_client.user, [])
+        my_rooms_info = MatrixRoomCreatorUser.worker_rooms_for_users.get(
+            username_to_userid(self.matrix_client.user, self.matrix_client.matrix_domain), [])
         #logging.info("User [%s] Found %d rooms to be created", self.username, len(my_rooms_info))
 
         for room_info in my_rooms_info:
@@ -125,7 +128,7 @@ class MatrixRoomCreatorUser(MatrixUser):
             # Actually create the room
             retries = 3
             while retries > 0:
-                response = self.matrix_client.room_create(alias=None, name=room_name, invite=user_ids)
+                response = self.matrix_client.room_create(alias=None, name=room_name, invite=user_ids, federate=True)
 
                 if isinstance(response, RoomCreateError):
                     logging.error("[%s] Could not create room %s (attempt %d). Trying again...",
