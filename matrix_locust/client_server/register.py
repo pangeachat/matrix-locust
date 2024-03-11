@@ -59,7 +59,7 @@ class MatrixRegisterUser(MatrixUser):
             gevent.sleep(999999)
             return
 
-        self.matrix_client.user = user["username"]
+        self.set_user(user["username"])
         self.matrix_client.password = user["password"]
 
         if self.matrix_client.user is None or self.matrix_client.password is None:

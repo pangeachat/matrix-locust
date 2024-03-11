@@ -152,6 +152,18 @@ class MatrixUser(FastHttpUser):
         self.matrix_client.add_response_callback(self._handle_login_response, LoginResponse)
         self.matrix_client.add_response_callback(self._handle_sync_response, SyncResponse)
 
+    def set_user(self, user_id):
+        """Sets the locust username and host based on user_id"""
+        if user_id.find(":") == -1:
+            self.matrix_client.user = user_id
+        else:
+            self.matrix_client.user = user_id[:user_id.find(":")]
+            self.matrix_client.matrix_domain = user_id.split(":")[-1]
+
+            protocol = self.matrix_client.locust_user.host[:self.matrix_client.locust_user.host.rfind("/") + 1]
+            self.matrix_client.locust_user.host = protocol + "matrix." + self.matrix_client.matrix_domain
+            self.matrix_client.locust_user.client.base_url = self.matrix_client.locust_user.host
+
     def login_from_csv(self, user_dict: Dict[str, str]) -> None:
         """Log-in the user from the credentials saved in the csv file
 
@@ -160,7 +172,7 @@ class MatrixUser(FastHttpUser):
         """
         global tokens_dict
 
-        self.matrix_client.user = user_dict["username"]
+        self.set_user(user_dict["username"])
         self.matrix_client.password = user_dict["password"]
 
         if tokens_dict.get(self.matrix_client.user) is not None:

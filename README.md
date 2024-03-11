@@ -168,6 +168,11 @@ their http requests. You can either run the load test with admin privileges
 to automatically increase the limit or change the descriptor limit yourself
 (e.g. `sudo ulimit -Sn 8192`).
 
+## Federated loadtests
+
+You can generate a set of set of users to be registered to multiple servers
+when running the `generate_users.py` script. See the script arguments for more
+information on specifying user domains and distributions.
 
 ## Running automated tests
 
