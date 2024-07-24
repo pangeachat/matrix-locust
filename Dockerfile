@@ -8,7 +8,7 @@ RUN apk add --no-cache curl git gcc libffi-dev musl-dev openssl-dev poetry pytho
 WORKDIR /usr/src/app
 
 # Clone the repository into the working directory
-RUN git clone https://gitlab.futo.org/load-testing/matrix-locust.git .
+RUN git clone https://github.com/circles-project/matrix-locust.git .
 
 # Fix externally-managed-envrionment errors: https://stackoverflow.com/a/76641565
 RUN rm /usr/lib/python3.11/EXTERNALLY-MANAGED

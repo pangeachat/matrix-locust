@@ -32,13 +32,13 @@ poetry install
 ```
 
 There is also a Dockerfile should you wish to build a container:
-```sudo docker build --tag futo/matrix-locust:latest .```
+```sudo docker build --tag circles/matrix-locust:latest .```
 
 Make sure to expose port `8089` in the container for access to the web UI.
 
-**BS-SPEKE / FUTO Circles setup (optional):**
+**BS-SPEKE / Circles setup (optional):**
 
-If you are using [swiclops](https://gitlab.futo.org/cvwright/swiclops) on your
+If you are using [swiclops](https://github.com/circles-project/swiclops) on your
 server and want to support the added UIA stages, you can install the
 dependencies as follows:
 1. Install python3 development:
@@ -146,7 +146,7 @@ Sometimes if you are running a load test that has more than 5,000 users, you
 may experience undefined behavior, where you may requests may return error
 responses or you may experience highly volatile RPS metrics. For large scale
 load testing, our current efforts are on developing
-[matrix-goose](https://gitlab.futo.org/load-testing/matrix-goose) for
+[matrix-goose](https://github.com/circles-project/matrix-goose) for
 larger-scale and eventually distributed load testing. You can attempt to run
 large-scale load tests with matrix-locust, but be aware you may encounter
 potential instability.
@@ -154,7 +154,7 @@ potential instability.
 **Locust uses a lot of system resources:**
 
 This is another motivating reason why we are focusing on developing
-[matrix-goose](https://gitlab.futo.org/load-testing/matrix-goose) for
+[matrix-goose](https://github.com/circles-project/matrix-goose) for
 large-scale load testing. For a more lightweight version of matrix-locust,
 you can checkout the `legacy` branch that is more lightweight, but with less
 capabilities and features.
