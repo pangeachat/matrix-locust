@@ -64,7 +64,7 @@ as well as the set of rooms where they will chat with each other.
 First we generate the usernames and passwords.
 
 ```console
-python generate_users.py
+python generate_users.py -d domain-without-matrix-dot-prefix.com
 ```
 
 This generates 1000 users by default and saves the usernames and passwords to
@@ -112,7 +112,7 @@ server).
 1. Registering user accounts
 
 ```console
-poetry run python run.py matrix_locust/client_server/register.py
+poetry run python run.py -n=4 --host=https://domain-without-matrix-dot-prefix.com matrix_locust/client_server/register.py
 ```
 
 2. Creating rooms
